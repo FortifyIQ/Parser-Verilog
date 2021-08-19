@@ -41,6 +41,7 @@ using token = verilog::VerilogParser::token;
 /* Define inclusive/exclusive states */
 %x in_comment 
 %x in_attribute
+%x in_directive
 
 /* Predefined rules */
 NEWLINE         "\n"|"\r\n"
@@ -64,8 +65,9 @@ BINARY         [+-]?[0-9]*"'"[Bb][01_xXzZ]+
 OCTAL          [+-]?[0-9]*"'"[Oo][0-7_xXzZ]+ 
 DECIMAL        [+-]?[0-9]*"'"[Dd][0-9_xXzZ]+
 HEX            [+-]?[0-9]*"'"[Hh][0-9a-fA-F_xXzZ]+ 
-REAL           [-+]?([0-9]*\.[0-9]+|[0-9]+)
+REAL           [-+]?[0-9]*\.[0-9]+|[0-9]+
 EXP            [-+]?[0-9]+"."?[0-9]*"E"[-+]?[0-9]+
+STRING         \".*\"
 
 
 /* Token rule section begins */
@@ -104,10 +106,40 @@ EXP            [-+]?[0-9]+"."?[0-9]*"E"[-+]?[0-9]+
 <in_attribute>. { /* ignore characters in comment */ }
 <in_attribute>{ATTRIBUTE_END} { BEGIN(INITIAL); }
 
+\` { BEGIN(in_directive); }
+<in_directive><<EOF>> { 
+                      BEGIN(INITIAL);
+                      std::cerr << "Unclosed directive at line " << loc->end.line << " col " << loc->end.column << '\n';
+                      yyterminate();
+                    }
+<in_directive>\\{NEWLINE} { loc->lines(); }
+<in_directive>. { /* ignore characters in comment */ }
+<in_directive>{NEWLINE} { BEGIN(INITIAL); loc->lines(); }
 
-":"|"."|"{"|"}"|"["|"]"|","|"*"|";"|"="|"-"|"+"|"|"|"("|")" {
+
+":"|"."|"{"|"}"|"["|"]"|","|"*"|";"|"="|"-"|"+"|"%"|"("|")"|"#"|"@" {
   return yytext[0];
 }
+
+"<<"		{ return token::SL; }
+">>"		{ return token::SR; }
+">="		{ return token::GE; }
+">"			{ return token::GT; }
+"<="		{ return token::LE; }
+"<"			{ return token::LT; }
+"=="		{ return token::EQ; }
+"!="		{ return token::NE; }
+"&&"		{ return token::LAND; }
+"||"		{ return token::LOR; }
+"&"			{ return token::BAND; }
+"^"			{ return token::BXOR; }
+"|"			{ return token::BOR; }
+"~&"		{ return token::BNAND; }
+"~|"		{ return token::BNOR; }
+"~^"		{ return token::BXNOR; }
+"^~"		{ return token::BXNOR; }
+"~"			{ return token::BNOT; }
+"!"     { return token::LNOT; }
 
 module    { return token::MODULE; }
 endmodule { return token::ENDMODULE; }
@@ -125,6 +157,36 @@ SUPPLY0   { return token::SUPPLY0; }
 SUPPLY1   { return token::SUPPLY1; }
 assign    { return token::ASSIGN; }
 
+always    { return token::ALWAYS; }
+and       { return token::AND; }
+begin     { return token::BEGINKEY; }
+case      { return token::CASE; }
+casex     { return token::CASEX; }
+casez     { return token::CASEZ; }
+default   { return token::DEFAULT; }
+else      { return token::ELSE; }
+end       { return token::ENDKEY; }
+endcase   { return token::ENDCASE; }
+endtask   { return token::ENDTASK; }
+for       { return token::FOR; }
+if        { return token::IF; }
+initial   { return token::INITIALKEY; }
+integer   { return token::INTEGERKEY; }
+logic     { return token::LOGIC; }
+negedge   { return token::NEGEDGE; }
+or        { return token::OR; }
+parameter { return token::PARAMETER; }
+posedge   { return token::POSEDGE; }
+real      { return token::REALKEY; }
+realtime  { return token::REALTIME; }
+repeat    { return token::REPEAT; }
+signed    { return token::SIGNED; }
+task      { return token::TASK; }
+time      { return token::TIME; }
+tri0      { return token::TRI0; }
+tri1      { return token::TRI1; }
+wait      { return token::WAIT; }
+while      { return token::WHILE; }
 
 {ESCAPED_NAME}  { 
   yylval->build<std::string>(yytext);
@@ -134,6 +196,11 @@ assign    { return token::ASSIGN; }
 {NAME} { 
   yylval->build<std::string>( yytext );
   return token::NAME;
+}
+
+\${NAME} {
+  yylval->build<std::string>(yytext);
+  return token::SYSTASKFUNC;
 }
 
 {INTEGER} {
@@ -162,16 +229,19 @@ assign    { return token::ASSIGN; }
       }
 
 {REAL} {
-         verilog::Constant c(yytext, verilog::ConstantType::REAL);
+         yylval->build<verilog::Constant>(verilog::Constant(yytext, verilog::ConstantType::REAL));
          return token::REAL;
        }
 
 {EXP} {
-        verilog::Constant c(yytext, verilog::ConstantType::EXP);
+        yylval->build<verilog::Constant>(verilog::Constant(yytext, verilog::ConstantType::EXP));
         return token::EXP;
       }
 
-
+{STRING} {
+  yylval->build<std::string>(yytext);
+  return token::STRING;
+}
 
 
 . {  

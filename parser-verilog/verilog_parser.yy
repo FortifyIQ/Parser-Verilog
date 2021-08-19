@@ -46,10 +46,21 @@
 %define api.value.type variant
 %define parse.assert
 
-
+%left LOR
+%left LAND
+%left BOR
+%left BXOR OR
+%left BAND AND
+%left EQ NE
+%left GT GE LT LE
+%left SL SR
 %left '-' '+'
-%left '*' '/'
+%left '*' '/' '%'
 %left UMINUS
+
+%right Right Shift
+
+%nonassoc UNARY
 
 %token              END    0     "end of file"
 %token              NEWLINE
@@ -59,20 +70,52 @@
 %token<std::string> NAME 
 %token<std::string> ESCAPED_NAME  
 
+/* Actual string */
+%token<std::string> STRING
+
+/* Built-in system tasks and functions names*/
+%token<std::string> SYSTASKFUNC
+
 %token<verilog::Constant> INTEGER BINARY OCTAL DECIMAL HEX REAL EXP
 
 /* Keyword tokens */
+// Structural
 %token MODULE ENDMODULE INPUT OUTPUT INOUT REG WIRE WAND WOR TRI TRIOR TRIAND SUPPLY0 SUPPLY1 ASSIGN
-
+// Procedural
+%token SL SR GE GT LE LT EQ NE LAND LOR BAND BXOR BOR BNAND BNOR BXNOR BNOT LNOT
+%token ALWAYS AND BEGINKEY CASE CASEX CASEZ DEFAULT ELSE ENDKEY ENDCASE ENDTASK FOR IF INITIALKEY INTEGERKEY LOGIC NEGEDGE OR PARAMETER POSEDGE REALKEY REALTIME REPEAT SIGNED TASK TIME TRI0 TRI1 WAIT WHILE
 
 /* Nonterminal Symbols */
-%type<std::string> valid_name  
+%type<std::string> valid_name hierarchical_identifier system_function_call function_call
 
 %type<std::pair<verilog::PortDirection, verilog::ConnectionType>> port_type 
 %type<verilog::Port> port_declarations port_decl port_decl_statements
 
 %type<verilog::NetType> net_type
 %type<verilog::Net> net_decl_statements net_decl 
+
+%type<verilog::Parameter> param_assignment
+%type<std::vector<Parameter>> parameter_decl list_of_param_assignments
+
+%type<verilog::Var> variable_type
+%type<std::vector<verilog::Var>> reg_decl integer_decl list_of_variable_identifiers
+
+%type<verilog::Task> task_decl task_item_decls task_item_decl
+%type<verilog::Expression> task_arg
+%type<std::vector<verilog::Expression>> task_args
+
+%type<verilog::Block> seq_block block_item_decls block_item_decl
+%type<verilog::Statement> block_statement
+%type<std::vector<verilog::Statement>> block_statements
+
+%type<verilog::BlockingAssignment> blocking_assignment
+%type<verilog::ConditionalStatement> conditional_statement
+%type<verilog::RepeatStatement> repeat_statement
+%type<verilog::WhileStatement> while_statement
+%type<verilog::ForStatement> for_statement
+%type<std::string> system_task_enable task_enable
+%type<verilog::WaitStatement> wait_statement
+%type<std::string> procedural_timing_control event_control delay_control event_expr
 
 %type<verilog::Constant> constant
 %type<verilog::Assignment> assignment 
@@ -85,6 +128,10 @@
 %type<std::vector<std::vector<verilog::NetConcat>>> nets_by_position
 
 %type<std::pair<std::variant<std::string, NetBit, NetRange>, std::vector<verilog::NetConcat>>> net_by_name 
+
+%type<std::pair<std::string, std::string>> range_expr optional_range
+%type<verilog::Expression> expr primary variable_lvalue
+%type<std::vector<verilog::Expression>> expr_list concatenation
 
 %locations 
 %start design
@@ -105,31 +152,54 @@ modules
   ;
 
 module
-  : MODULE valid_name ';' 
+  : MODULE valid_name module_parameter_port_list ';' 
     { 
       driver->add_module(std::move($2));
     }
     statements ENDMODULE  
-  | MODULE valid_name '(' ')' ';'
+  | MODULE valid_name module_parameter_port_list '(' ')' ';'
     {
       driver->add_module(std::move($2));
     }
     statements ENDMODULE
-  | MODULE valid_name '(' port_names ')' ';' 
+  | MODULE valid_name module_parameter_port_list '(' port_names ')' ';' 
     {
       driver->add_module(std::move($2));
     }
     statements ENDMODULE
-  | MODULE valid_name '(' 
+  | MODULE valid_name module_parameter_port_list '(' 
     { 
       driver->add_module(std::move($2)); 
     } 
     port_declarations ')' 
     { 
-      driver->add_port(std::move($5)); 
+      driver->add_port(std::move($6)); 
     }
     ';' statements ENDMODULE 
   ;
+
+module_parameter_port_list
+	:
+	| '#' '(' parameter_declarations ')'
+	;
+
+parameter_declarations
+	: parameter_declarations ',' PARAMETER parameter_declaration
+	| PARAMETER parameter_declaration
+	;
+
+parameter_declaration
+	: SIGNED range_expr parameter_assignments
+	| INTEGER parameter_assignments
+	| REAL parameter_assignments
+	| REALTIME parameter_assignments
+	| TIME parameter_assignments
+	;
+
+parameter_assignments
+	: parameter_assignments ',' %prec Right valid_name '=' expr
+	| valid_name '=' expr
+	;
 
 // port names are ignored as they will be parsed later in declaration
 port_names 
@@ -192,12 +262,30 @@ statements
 statement
   : declaration
   | instance
+  | initial_construct
+  | always_construct
   ;
 
 
 declaration 
   : port_decl_statements ';' { driver->add_port(std::move($1)); } 
   | net_decl_statements  ';' { driver->add_net(std::move($1)); }
+  | parameter_decl
+    {
+      for (auto &decl : $1)
+        driver->add_parameter(std::move(decl));
+    }
+  | reg_decl
+    {
+      for (auto &decl : $1)
+        driver->add_var(std::move(decl));
+    }
+  | integer_decl
+    {
+      for (auto &decl : $1)
+        driver->add_var(std::move(decl));
+    }
+  | task_decl {driver->add_task(std::move($1));}
   ;
 
 // e.g. "input a, b, output c, d" is not allowed in port declaration statements 
@@ -251,6 +339,415 @@ net_decl
       $$.names.push_back(std::move($7)); 
     }
   ;
+
+parameter_decl
+  : PARAMETER list_of_param_assignments ';'
+    {$$ = std::move($2);}
+  ;
+
+list_of_param_assignments
+  : param_assignment
+    {$$.push_back(std::move($1));}
+  | list_of_param_assignments ',' param_assignment
+    {
+      $1.push_back(std::move($3));
+      $$ = std::move($1);
+    }
+  ;
+
+param_assignment
+  : hierarchical_identifier '=' expr
+    {
+      $$.name = std::move($1);
+      $$.rval = std::move($3);
+    }
+  ;
+
+reg_decl
+  : REG optional_range list_of_variable_identifiers ';'
+    {
+      for (auto &decl : $3) {
+        decl.type = verilog::VarType::REG;
+        decl.beg = $2.first;
+        decl.end = $2.second;
+        $$.push_back(std::move(decl));
+      }
+    }
+  ;
+
+list_of_variable_identifiers
+  : variable_type
+    {$$.push_back(std::move($1));}
+  | list_of_variable_identifiers ',' variable_type
+    {
+      $1.push_back(std::move($3));
+      $$ = std::move($1);
+    }
+  ;
+
+variable_type
+  : valid_name
+    {$$.name = $1;}
+  | valid_name '=' expr
+    {
+      $$.name = $1;
+      $$.rval = std::move($3);
+    }
+  | valid_name range_expr
+    {$$.name = $1;}
+  ;
+
+integer_decl
+  : INTEGERKEY list_of_variable_identifiers ';'
+    {
+      for (auto &decl : $2) {
+        decl.type = verilog::VarType::INTEGERKEY;
+        $$.push_back(std::move(decl));
+      }
+    }
+  ;
+
+task_decl
+  : TASK valid_name ';' block_statement ENDTASK
+    {
+      $$.name = $2;
+      $$.statement = std::move($4);
+    }
+  | TASK valid_name ';' task_item_decls block_statement ENDTASK
+    {
+      $$.name = $2;
+      $$.args = std::move($4.args);
+      $$.parameters = std::move($4.parameters);
+      $$.vars = std::move($4.vars);
+      $$.statement = std::move($5);
+    }
+  | TASK valid_name '(' ')' ';' block_statement ENDTASK
+    {
+      $$.name = $2;
+      $$.statement = std::move($6);
+    }
+  | TASK valid_name '(' ')' ';' block_item_decls block_statement ENDTASK
+    {
+      $$.name = $2;
+      $$.parameters = std::move($6.parameters);
+      $$.vars = std::move($6.vars);
+      $$.statement = std::move($7);
+    }
+  | TASK valid_name '(' task_args ')' ';' block_statement ENDTASK
+    {
+      $$.name = $2;
+      $$.args = std::move($4);
+      $$.statement = std::move($7);
+    }
+  | TASK valid_name '(' task_args ')' ';' block_item_decls block_statement ENDTASK
+    {
+      $$.name = $2;
+      $$.args = std::move($4);
+      $$.parameters = std::move($7.parameters);
+      $$.vars = std::move($7.vars);
+      $$.statement = std::move($8);
+    }
+  ;
+
+task_item_decls
+: task_item_decl
+    {$$ = std::move($1);}
+  | task_item_decls task_item_decl
+    {
+      // for (const auto &arg : $2.args)
+      //   $1.args.push_back(std::move(arg));
+      // for (const auto &param : $2.parameters)
+      //   $1.parameters.push_back(std::move(param));
+      // for (const auto &var : $2.vars)
+      //   $1.vars.push_back(std::move(var));
+
+      $1.args.insert($1.args.end(), std::make_move_iterator($2.args.begin()), std::make_move_iterator($2.args.end()));
+      $1.parameters.insert($1.parameters.end(), std::make_move_iterator($2.parameters.begin()), std::make_move_iterator($2.parameters.end()));
+      $1.vars.insert($1.vars.end(), std::make_move_iterator($2.vars.begin()), std::make_move_iterator($2.vars.end()));
+      $$ = std::move($1);
+    }
+  ;
+
+task_item_decl
+  : block_item_decl
+    {
+      $$.parameters = std::move($1.parameters);
+      $$.vars = std::move($1.vars);
+    }
+  | task_arg
+    {$$.args.push_back(std::move($1));}
+  ;
+
+task_args
+	: task_args ',' task_arg
+    {
+      $1.emplace_back(std::move($3));
+      $$ = std::move($1);
+    }
+	| task_arg
+    {$$.emplace_back(std::move($1));}
+	;
+
+task_arg
+	: INOUT optional_range valid_name
+    {
+      verilog::Expression expr;
+      expr.string = $3;
+      expr.range_beg = $2.first;
+      expr.range_end = $2.second;
+      $$ = std::move(expr);
+
+    }
+	| INPUT optional_range valid_name
+    {
+      verilog::Expression expr;
+      expr.string = $3;
+      expr.range_beg = $2.first;
+      expr.range_end = $2.second;
+      $$ = std::move(expr);
+
+    }
+	| OUTPUT optional_range valid_name
+    {
+      verilog::Expression expr;
+      expr.string = $3;
+      expr.range_beg = $2.first;
+      expr.range_end = $2.second;
+      $$ = std::move(expr);
+
+    }
+  ;
+
+seq_block
+  : BEGINKEY block_statements ENDKEY
+    {$$.statements = std::move($2);}
+  | BEGINKEY ':' valid_name block_statements ENDKEY
+    {
+      $$.name = $3;
+      $$.statements = std::move($4);
+    }
+  | BEGINKEY ':' valid_name block_item_decls block_statements ENDKEY
+    {
+      $$.name = $3;
+      $$.parameters = std::move($4.parameters);
+      $$.vars = std::move($4.vars);
+      $$.statements = std::move($5);
+    }
+  ;
+
+block_item_decls
+  : block_item_decl
+    {$$ = std::move($1);}
+  | block_item_decls block_item_decl
+    {
+      // for (const auto &param : $2.parameters)
+      //   $1.parameters.push_back(std::move(param));
+      // for (const auto &var : $2.vars)
+      //   $1.vars.push_back(std::move(var));
+
+      $1.parameters.insert($1.parameters.end(), std::make_move_iterator($2.parameters.begin()), std::make_move_iterator($2.parameters.end()));
+      $1.vars.insert($1.vars.end(), std::make_move_iterator($2.vars.begin()), std::make_move_iterator($2.vars.end()));
+      $$ = std::move($1);
+    }
+  ;
+
+block_item_decl
+  : parameter_decl
+    {
+      $$.parameters = std::move($1);
+    }
+  | reg_decl
+    {
+      $$.vars = std::move($1);
+    }
+  | integer_decl
+    {
+      $$.vars = std::move($1);
+    }
+  ;
+
+block_statements
+	: block_statements block_statement
+    {
+      $1.emplace_back(std::move($2));
+      $$ = std::move($1);
+    }
+	| block_statement
+    {$$.emplace_back(std::move($1));}
+	;
+
+block_statement
+	: ';'
+    {$$ = "";}
+  | blocking_assignment ';'
+    {$$ = std::move($1);}
+  | case_statement
+    {$$ = "case statement";}
+  | conditional_statement
+    {$$ = "conditional statement";}
+  | repeat_statement
+    {$$ = std::move($1);}
+  | while_statement
+    {$$ = std::move($1);}
+  | for_statement
+    {$$ = "for statement";}
+  | seq_block
+    {$$ = std::move($1);}
+  | system_task_enable
+    {$$ = "";}
+  | task_enable
+    {$$ = std::move($1);}
+  | wait_statement
+    {$$ = std::move($1);}
+  | event_control block_statement
+    {$$ = verilog::EventControl(std::move($1), std::move($2));}
+  | delay_control block_statement
+    {$$ = "";}
+	;
+
+blocking_assignment
+  : variable_lvalue '=' expr
+    {
+      $$.lval = std::move($1);
+      $$.rval = std::move($3);
+    }
+  | variable_lvalue '=' procedural_timing_control expr
+    {
+      $$.lval = std::move($1);
+      $$.rval = std::move($4);
+    }
+  ;
+
+variable_lvalue
+  : hierarchical_identifier optional_range
+    {
+      $$.string = $1;
+      $$.range_beg = $2.first;
+      $$.range_end = $2.second;
+    }
+  ;
+
+case_statement
+	: CASE '(' expr ')' case_items ENDCASE
+	| CASEX '(' expr ')' case_items ENDCASE
+	| CASEZ '(' expr ')' case_items ENDCASE
+	;
+
+case_items
+	: case_items case_item
+	| case_item
+	;
+
+case_item
+	: expr_list ':' block_statement
+	| DEFAULT ':' block_statement
+	| DEFAULT block_statement
+	;
+
+conditional_statement
+  : IF '(' expr ')' block_statement
+  | IF '(' expr ')' block_statement ELSE block_statement
+  | if_else_if_statement
+  ;
+
+if_else_if_statement
+  : IF '(' expr ')' block_statement else_if_statements
+  | IF '(' expr ')' block_statement else_if_statements ELSE block_statement
+  ;
+
+else_if_statements
+  :
+  | ELSE IF '(' expr ')' block_statement
+  | else_if_statements ELSE IF '(' expr ')' block_statement
+  ;
+
+repeat_statement
+  : REPEAT '(' expr ')' block_statement
+    {
+      $$.expr = std::move($3);
+      $$.stmt = std::move($5);
+    }
+  ;
+
+while_statement
+  : WHILE '(' expr ')' block_statement
+    {
+      $$.while_cond = std::move($3);
+      $$.while_block = std::move($5);
+    }
+  ;
+
+for_statement
+  : FOR '(' variable_assignment ';' expr ';' variable_assignment ')' block_statement
+  ;
+
+variable_assignment
+  : variable_lvalue '=' expr;
+  ;
+
+system_task_enable
+  : SYSTASKFUNC ';'
+  | SYSTASKFUNC '(' ')' ';'
+  | SYSTASKFUNC '(' expr_list ')' ';'
+  ;
+
+task_enable
+  : hierarchical_identifier ';'
+    {$$ = $1 + "();";}
+  | hierarchical_identifier '(' expr_list ')' ';'
+    {
+      $$ = $1 + '(';
+      for (const auto &expression : $3)
+        $$ += expression.string;
+      $$ += ");";
+    }
+  ;
+
+wait_statement
+  : WAIT '(' expr ')' block_statement
+    {
+      $$.expr = std::move($3);
+      $$.statement = std::move($5);
+    }
+  ;
+
+procedural_timing_control
+	: delay_control
+	| event_control
+	;
+
+delay_control
+  : '#' INTEGER
+    {$$ = $2.value;}
+  | '#' REAL
+    {$$ = $2.value;}
+  | '#' valid_name
+    {$$ = $2;}
+	;
+
+event_control
+	: '@' hierarchical_identifier
+    {$$ = $2;}
+	| '@' '(' event_expr ')'
+    {$$ = $3;}
+	| '@' '(' '*' ')'
+    {$$ = "( * )";}
+	| '@' '*'
+    {$$ = " * ";}
+	;
+
+event_expr
+	: expr
+    {$$ = $1.string;}
+	| POSEDGE expr
+    {$$ = "posedge(" + $2.string + ')';}
+	| NEGEDGE expr
+    {$$ = "negedge(" + $2.string + ')';}
+	| event_expr OR event_expr
+    {$$ = $1 + " || " + $3;}
+	| event_expr ',' event_expr
+    {$$ = $1 + ", " + $3;}
+	;
 
 
 statement_assign
@@ -451,25 +948,267 @@ net_by_name
 
 // parameters are ignored for now
 parameters 
-  : '#' '(' param_exprs ')'
+  : '#' '(' expr_list ')'
   ;
 
-param_exprs
-  : param_expr 
-  | param_exprs ',' param_expr
+
+initial_construct
+  : INITIALKEY block_statement
   ;
 
-param_expr 
-  : valid_name 
-  | '`' valid_name 
-  | constant 
-  | '-' param_expr %prec UMINUS 
-  | param_expr '+' param_expr
-  | param_expr '-' param_expr
-  | param_expr '*' param_expr
-  | param_expr '/' param_expr
-  | '(' param_expr ')'
+always_construct
+  : ALWAYS block_statement
   ;
+
+optional_range
+  :
+    {
+      $$.first = "";
+      $$.second = "";
+    }
+  | range_expr
+    {$$ = $1;}
+  ;
+
+range_expr
+	: '[' expr ']'
+    {$$.first = $2.string;}
+	| '[' expr ':' expr ']'
+    {
+      $$.first = $2.string;
+      $$.second = $4.string;
+    }
+	;
+
+expr
+  : primary
+    {$$ = std::move($1);}
+  // | unary_operator primary
+  // | expr binary_operator expr
+  // | expr '?' expr ':' expr
+  | '-' expr %prec UMINUS
+    {$$.string = " -" + $2.string;}
+  | expr '+' expr
+    {
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " + " + $3.string;
+    }
+  | expr '-' expr
+    {
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " - " + $3.string;
+    }
+  | expr '*' expr
+    {
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " * " + $3.string;
+    }
+  | expr '/' expr
+    {
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " / " + $3.string;
+    }
+  | expr '%' expr
+    {
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " % " + $3.string;
+    }
+  | expr EQ expr
+		{
+      $$.leftOperand = std::make_unique<verilog::Expression>(std::move($1));
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.left_op = $1.string;
+      $$.string = $3.string;
+    }
+	| expr NE expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " != " + $3.string;
+    }
+	| expr GT expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " > " + $3.string;
+    }
+	| expr GE expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " >= " + $3.string;
+    }
+	| expr LT expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " < " + $3.string;
+    }
+	| expr LE expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " <= " + $3.string;
+    }
+	| expr SL expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " << " + $3.string;
+    }
+	| expr SR expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " >> " + $3.string;
+    }
+	| expr LAND expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " && " + $3.string;
+    }
+	| expr LOR expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " || " + $3.string;
+    }
+	| expr BAND expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " & " + $3.string;
+    }
+	| expr BXOR expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " ^ " + $3.string;
+    }
+	| expr BOR expr
+		{
+      $$.isBitString = $1.isBitString || $3.isBitString;
+      $$.string = $1.string + " | " + $3.string;
+    }
+	| LNOT expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = " !" + $2.string;
+    }
+	| BAND expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = "Unsupported OP BAND UNARY" + $2.string;
+    }
+	| BOR expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = "Unsupported OP BOR UNARY" + $2.string;
+    }
+	| BNAND expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = "Unsupported OP BNAND UNARY" + $2.string;
+    }
+	| BNOR expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = "Unsupported OP BNOR UNARY" + $2.string;
+    }
+	| BXOR expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = "Unsupported OP BXOR UNARY" + $2.string;
+    }
+	| BXNOR expr %prec UNARY
+    {
+      $$.isBitString = $2.isBitString;
+      $$.string = "Unsupported OP BXNOR UNARY" + $2.string;
+    }
+	| BNOT expr %prec UNARY
+		{
+      $$.isBitString = $2.isBitString;
+      $$.string = " ~" + $2.string;
+    }
+	| '+' expr %prec UNARY
+		{
+      $$.isBitString = $2.isBitString;
+      $$.string = " +" + $2.string;
+    }
+  ;
+
+primary
+  : constant
+    {
+      if($1.type == verilog::ConstantType::BINARY
+        || $1.type == verilog::ConstantType::OCTAL
+        || $1.type == verilog::ConstantType::DECIMAL
+        || $1.type == verilog::ConstantType::HEX)
+        $$.isBitString = true;
+      $$.string = $1.value;
+      $$.type = verilog::ExpressionType::CONSTANT;
+    }
+  | hierarchical_identifier optional_range
+    {
+      $$.string = $1;
+      $$.range_beg = $2.first;
+      $$.range_end = $2.second;
+      $$.type = verilog::ExpressionType::IDENTIFIER;
+    }
+  | concatenation
+    {
+      $$.type = verilog::ExpressionType::CONCATENATION;
+    }
+  | multiple_concatenation
+    {
+      $$.type = verilog::ExpressionType::MULTICONCATENATION;
+    }
+  | function_call
+    {
+      $$.type = verilog::ExpressionType::FUNCTIONCALL;
+    }
+  | system_function_call
+    {
+      $$.string = $1;
+      $$.type = verilog::ExpressionType::SYSTEMFUNCTIONCALL;
+    }
+  | '(' expr ')'
+    {$$.string = $2.string;}
+  | STRING
+    {
+      $$.string = $1;
+      $$.type = verilog::ExpressionType::STRING;
+    }
+  ;
+
+hierarchical_identifier
+	: hierarchical_identifier '.' valid_name
+    {
+      $1 += $3;
+      $$ = $1;
+    }
+	| valid_name
+    {$$ = $1;}
+	;
+
+concatenation
+  : '{' expr_list '}'
+    {$$ = std::move($2);}
+  ;
+
+expr_list
+  : expr_list ',' expr
+    {$1.emplace_back(std::move($3));
+    $$ = std::move($1);}
+  | expr
+    {$$.emplace_back(std::move($1));}
+  ;
+
+multiple_concatenation
+  : '{' expr concatenation '}'
+  ;
+
+function_call
+  : hierarchical_identifier '(' expr_list ')'
+    {$$ = $1;}
+  ;
+
+system_function_call
+  : SYSTASKFUNC
+    {$$ = $1;}
+	| SYSTASKFUNC '(' expr_list ')'
+    {$$ = $1;}
+	;
 
 
 %%

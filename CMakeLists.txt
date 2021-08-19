@@ -9,6 +9,7 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -O2")
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/CMake) # Include custom modules
 
 # add the binary tree to the search path for include files
 include_directories(${PROJECT_SOURCE_DIR})
@@ -22,6 +23,8 @@ include_directories(parser-verilog)
 
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
+find_package(Boost COMPONENTS program_options filesystem unit_test_framework iostreams timer serialization coroutine)
+find_package(Botan)
 
 BISON_TARGET(verilog_parser
              ${PROJECT_SOURCE_DIR}/parser-verilog/verilog_parser.yy
@@ -44,6 +47,11 @@ add_executable(sample_parser
   ${PROJECT_SOURCE_DIR}/example/sample_parser.cpp
   ${FLEX_verilog_lexer_OUTPUTS}
   ${BISON_verilog_parser_OUTPUTS}
+)
+
+target_link_libraries(sample_parser 
+  Boost::boost
+  Botan::Botan
 )
 
 # A drop-in replacement OpenTimer Verilog parser
