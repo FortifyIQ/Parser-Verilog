@@ -263,20 +263,17 @@ namespace verilog {
   struct Expression {
     bool isBitString = false;
     std::string string; // expression as string
-    std::string left_op;
-    std::string range_beg;
-    std::string range_end;
+    std::string beg;
+    std::string end;
     std::string op;
-    std::unique_ptr<Expression> leftOperand{nullptr};
-    std::unique_ptr<Expression> rightOperand{nullptr}; // for unary operations only right operand is set
+    std::shared_ptr<Expression> leftOperand{nullptr};
+    std::shared_ptr<Expression> rightOperand{nullptr}; // for unary operations only right operand is set
     ExpressionType type{ExpressionType::NONE};
   };
 
   inline std::ostream& operator<<(std::ostream& os, const Expression& expr) {
-    os << "Expr: " << expr.string;
-    if (expr.isBitString)
-      os << " is bitstring";
-    os << ", range: " << expr.range_beg << " : " << expr.range_end << '\n';
+    os << "Expression: " << expr.string;
+    os << ", range: " << expr.beg << " : " << expr.end << '\n';
     return os;
   }
 
@@ -324,6 +321,7 @@ namespace verilog {
   struct Block;
 
   struct BlockingAssignment;
+  struct CaseStatement;
   struct ConditionalStatement;
   struct WhileStatement;
   struct ForStatement;
@@ -332,7 +330,9 @@ namespace verilog {
   struct EventControl;
 
   // Block contains statements, statement can be a block itself
-  using Statement = boost::variant<std::string, Block, BlockingAssignment, ConditionalStatement,
+  using Statement = boost::variant<std::string, Block, BlockingAssignment,
+                                   boost::recursive_wrapper<CaseStatement>,
+                                   boost::recursive_wrapper<ConditionalStatement>,
                                    boost::recursive_wrapper<WhileStatement>,
                                    boost::recursive_wrapper<ForStatement>,
                                    boost::recursive_wrapper<WaitStatement>,
@@ -348,44 +348,54 @@ namespace verilog {
   };
 
   struct BlockingAssignment {
+    std::string timeControl;
     Expression lval;
     Expression rval;
   };
 
   struct ConditionalStatement {
-    Expression if_cond;
-    Block if_block;
-    Block else_block;
+    Expression ifCondition;
+    Statement ifStatement;
+    std::vector<std::pair<Expression, Statement>> elifs;
+    Statement elseStatement;
+  };
+
+  struct CaseItem {
+    bool isDefault = false;
+    std::vector<Expression> expressions;
+    Statement statement;
+  };
+
+  enum class CaseType {
+    CASE,
+    CASEX,
+    CASEZ
+  };
+
+  struct CaseStatement {
+    Expression expr;
+    std::vector<CaseItem> items;
+    CaseType type;
   };
 
   struct WhileStatement {
-    Expression while_cond;
-    Statement while_block;
+    Expression condition;
+    Statement statement;
   };
 
   struct ForStatement {
-    Expression expr1;
-    Expression expr2;
-    Expression expr3;
-    Statement for_block;
+    std::pair<Expression, Expression> initAssign; // left and right values of counter assignment
+    Expression condition;
+    std::pair<Expression, Expression> iterAssign; // counter update is performed only through assignment in Verilog
+    Statement statement;
   };
 
   struct RepeatStatement {
-    RepeatStatement() = default;
-    RepeatStatement(Expression _expr, Statement _stmt)
-    : expr(std::move(_expr)), stmt(std::move(_stmt))
-    {}
-
     Expression expr;
-    Statement stmt;
+    Statement statement;
   };
 
   struct WaitStatement {
-    WaitStatement() = default;
-    WaitStatement(Expression _expr, Statement _stmt)
-    : expr(std::move(_expr)), statement(std::move(_stmt))
-    {}
-
     Expression expr;
     Statement statement;
   };
@@ -415,60 +425,32 @@ namespace verilog {
           std::cout << obj.rval << '\n';
       }
 
+      void operator()(const CaseStatement &obj) const
+      {
+          std::cout << obj.expr << '\n';
+      }
+
       void operator()(const ConditionalStatement &obj) const
       {
-        std::cout << "if expr: " << obj.if_cond << '\n';
-        std::cout << "if block: " << '\n';
-        std::cout << obj.if_block.name << '\n';
-
-        std::cout << "Declarations:\n";
-        for(const auto& n: obj.if_block.vars)
-          std::cout << "Var decl: " << n << '\n';
-        for(const auto& n: obj.if_block.parameters)
-          std::cout << "Param decl: " << n << '\n';
-
-        if(!obj.if_block.statements.empty()){
-          std::cout << "Statements: {\n";
-          for(const auto& statement: obj.if_block.statements)
-            boost::apply_visitor(printer(), statement);
-          std::cout << "}\n";
-        }
-
-        std::cout << "else block: " << '\n';
-        std::cout << obj.else_block.name << '\n';
-
-        std::cout << "Declarations:\n";
-        for(const auto& n: obj.else_block.vars)
-          std::cout << "Var decl: " << n << '\n';
-        for(const auto& n: obj.else_block.parameters)
-          std::cout << "Param decl: " << n << '\n';
-
-        if(!obj.else_block.statements.empty()){
-          std::cout << "Statements: {\n";
-          for(const auto& statement: obj.else_block.statements)
-            boost::apply_visitor(printer(), statement);
-          std::cout << "}\n";
-        }
+        std::cout << "ConditionalStatement\n";
       }
 
       void operator()(const WhileStatement &obj) const
       {
-        std::cout << "while expr: " << obj.while_cond << '\n';
+        std::cout << "while expr: " << obj.condition << '\n';
         std::cout << "while block: " << '\n';
-        boost::apply_visitor(printer(), obj.while_block);
+        boost::apply_visitor(printer(), obj.statement);
       }
 
       void operator()(const ForStatement &obj) const
       {
-        std::cout << "for expr: " << obj.expr1 << obj.expr2 << obj.expr3 << '\n';
-        std::cout << "for block: " << '\n';
-        boost::apply_visitor(printer(), obj.for_block);
+        std::cout << "for statement\n";
       }
 
       void operator()(const RepeatStatement &obj) const
       {
         std::cout << "repeat expr: " << obj.expr << '\n';
-        boost::apply_visitor(printer(), obj.stmt);
+        boost::apply_visitor(printer(), obj.statement);
       }
 
       void operator()(const WaitStatement &obj) const

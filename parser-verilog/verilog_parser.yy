@@ -82,7 +82,7 @@
 // Structural
 %token MODULE ENDMODULE INPUT OUTPUT INOUT REG WIRE WAND WOR TRI TRIOR TRIAND SUPPLY0 SUPPLY1 ASSIGN
 // Procedural
-%token SL SR GE GT LE LT EQ NE LAND LOR BAND BXOR BOR BNAND BNOR BXNOR BNOT LNOT
+%token<std::string> SL SR GE GT LE LT EQ NE LAND LOR BAND BXOR BOR BNAND BNOR BXNOR BNOT LNOT
 %token ALWAYS AND BEGINKEY CASE CASEX CASEZ DEFAULT ELSE ENDKEY ENDCASE ENDTASK FOR IF INITIALKEY INTEGERKEY LOGIC NEGEDGE OR PARAMETER POSEDGE REALKEY REALTIME REPEAT SIGNED TASK TIME TRI0 TRI1 WAIT WHILE
 
 /* Nonterminal Symbols */
@@ -98,7 +98,7 @@
 %type<std::vector<Parameter>> parameter_decl list_of_param_assignments
 
 %type<verilog::Var> variable_type
-%type<std::vector<verilog::Var>> reg_decl integer_decl list_of_variable_identifiers
+%type<std::vector<verilog::Var>> reg_decl logic_decl integer_decl list_of_variable_identifiers
 
 %type<verilog::Task> task_decl task_item_decls task_item_decl
 %type<verilog::Expression> task_arg
@@ -109,7 +109,11 @@
 %type<std::vector<verilog::Statement>> block_statements
 
 %type<verilog::BlockingAssignment> blocking_assignment
+%type<verilog::CaseStatement> case_statement
+%type<verilog::CaseItem> case_item
+%type<std::vector<verilog::CaseItem>> case_items
 %type<verilog::ConditionalStatement> conditional_statement
+%type<std::vector<std::pair<verilog::Expression, verilog::Statement>>> else_if_statements
 %type<verilog::RepeatStatement> repeat_statement
 %type<verilog::WhileStatement> while_statement
 %type<verilog::ForStatement> for_statement
@@ -132,6 +136,9 @@
 %type<std::pair<std::string, std::string>> range_expr optional_range
 %type<verilog::Expression> expr primary variable_lvalue
 %type<std::vector<verilog::Expression>> expr_list concatenation
+%type<std::pair<verilog::Expression, verilog::Expression>> variable_assignment
+
+%type<std::string> binary_operator
 
 %locations 
 %start design
@@ -280,6 +287,11 @@ declaration
       for (auto &decl : $1)
         driver->add_var(std::move(decl));
     }
+  | logic_decl
+    {
+      for (auto &decl : $1)
+        driver->add_var(std::move(decl));
+    }
   | integer_decl
     {
       for (auto &decl : $1)
@@ -397,6 +409,18 @@ variable_type
     {$$.name = $1;}
   ;
 
+logic_decl
+  : LOGIC optional_range list_of_variable_identifiers ';'
+    {
+      for (auto &decl : $3) {
+        decl.type = verilog::VarType::LOGIC;
+        decl.beg = $2.first;
+        decl.end = $2.second;
+        $$.push_back(std::move(decl));
+      }
+    }
+  ;
+
 integer_decl
   : INTEGERKEY list_of_variable_identifiers ';'
     {
@@ -454,13 +478,6 @@ task_item_decls
     {$$ = std::move($1);}
   | task_item_decls task_item_decl
     {
-      // for (const auto &arg : $2.args)
-      //   $1.args.push_back(std::move(arg));
-      // for (const auto &param : $2.parameters)
-      //   $1.parameters.push_back(std::move(param));
-      // for (const auto &var : $2.vars)
-      //   $1.vars.push_back(std::move(var));
-
       $1.args.insert($1.args.end(), std::make_move_iterator($2.args.begin()), std::make_move_iterator($2.args.end()));
       $1.parameters.insert($1.parameters.end(), std::make_move_iterator($2.parameters.begin()), std::make_move_iterator($2.parameters.end()));
       $1.vars.insert($1.vars.end(), std::make_move_iterator($2.vars.begin()), std::make_move_iterator($2.vars.end()));
@@ -491,30 +508,24 @@ task_args
 task_arg
 	: INOUT optional_range valid_name
     {
-      verilog::Expression expr;
-      expr.string = $3;
-      expr.range_beg = $2.first;
-      expr.range_end = $2.second;
-      $$ = std::move(expr);
-
+      $$.type = verilog::ExpressionType::IDENTIFIER;
+      $$.string = $3;
+      $$.beg = $2.first;
+      $$.end = $2.second;
     }
 	| INPUT optional_range valid_name
     {
-      verilog::Expression expr;
-      expr.string = $3;
-      expr.range_beg = $2.first;
-      expr.range_end = $2.second;
-      $$ = std::move(expr);
-
+      $$.type = verilog::ExpressionType::IDENTIFIER;
+      $$.string = $3;
+      $$.beg = $2.first;
+      $$.end = $2.second;
     }
 	| OUTPUT optional_range valid_name
     {
-      verilog::Expression expr;
-      expr.string = $3;
-      expr.range_beg = $2.first;
-      expr.range_end = $2.second;
-      $$ = std::move(expr);
-
+      $$.type = verilog::ExpressionType::IDENTIFIER;
+      $$.string = $3;
+      $$.beg = $2.first;
+      $$.end = $2.second;
     }
   ;
 
@@ -540,11 +551,6 @@ block_item_decls
     {$$ = std::move($1);}
   | block_item_decls block_item_decl
     {
-      // for (const auto &param : $2.parameters)
-      //   $1.parameters.push_back(std::move(param));
-      // for (const auto &var : $2.vars)
-      //   $1.vars.push_back(std::move(var));
-
       $1.parameters.insert($1.parameters.end(), std::make_move_iterator($2.parameters.begin()), std::make_move_iterator($2.parameters.end()));
       $1.vars.insert($1.vars.end(), std::make_move_iterator($2.vars.begin()), std::make_move_iterator($2.vars.end()));
       $$ = std::move($1);
@@ -582,19 +588,19 @@ block_statement
   | blocking_assignment ';'
     {$$ = std::move($1);}
   | case_statement
-    {$$ = "case statement";}
+    {$$ = std::move($1);}
   | conditional_statement
-    {$$ = "conditional statement";}
+    {$$ = std::move($1);}
   | repeat_statement
     {$$ = std::move($1);}
   | while_statement
     {$$ = std::move($1);}
   | for_statement
-    {$$ = "for statement";}
+    {$$ = std::move($1);}
   | seq_block
     {$$ = std::move($1);}
   | system_task_enable
-    {$$ = "";}
+    {$$ = "//System task skipped";}
   | task_enable
     {$$ = std::move($1);}
   | wait_statement
@@ -602,7 +608,7 @@ block_statement
   | event_control block_statement
     {$$ = verilog::EventControl(std::move($1), std::move($2));}
   | delay_control block_statement
-    {$$ = "";}
+    {$$ = "//Delay control skipped";}
 	;
 
 blocking_assignment
@@ -613,6 +619,7 @@ blocking_assignment
     }
   | variable_lvalue '=' procedural_timing_control expr
     {
+      $$.timeControl = std::move($3);
       $$.lval = std::move($1);
       $$.rval = std::move($4);
     }
@@ -622,73 +629,148 @@ variable_lvalue
   : hierarchical_identifier optional_range
     {
       $$.string = $1;
-      $$.range_beg = $2.first;
-      $$.range_end = $2.second;
+      $$.beg = $2.first;
+      $$.end = $2.second;
     }
   ;
 
 case_statement
 	: CASE '(' expr ')' case_items ENDCASE
+    {
+      $$.type = verilog::CaseType::CASE;
+      $$.expr = std::move($3);
+      $$.items = std::move($5);
+    }
 	| CASEX '(' expr ')' case_items ENDCASE
+    {
+      $$.type = verilog::CaseType::CASEX;
+      $$.expr = std::move($3);
+      $$.items = std::move($5);
+    }
 	| CASEZ '(' expr ')' case_items ENDCASE
+    {
+      $$.type = verilog::CaseType::CASEZ;
+      $$.expr = std::move($3);
+      $$.items = std::move($5);
+    }
 	;
 
 case_items
 	: case_items case_item
+    {
+      $1.emplace_back(std::move($2));
+      $$ = std::move($1);
+    }
 	| case_item
+    {
+      $$.emplace_back(std::move($1));
+    }
 	;
 
 case_item
 	: expr_list ':' block_statement
+    {
+      $$.expressions = std::move($1);
+      $$.statement = std::move($3);
+    }
 	| DEFAULT ':' block_statement
+    {
+      $$.isDefault = true;
+      $$.statement = std::move($3);
+    }
 	| DEFAULT block_statement
+    {
+      $$.isDefault = true;
+      $$.statement = std::move($2);
+    }
 	;
 
 conditional_statement
   : IF '(' expr ')' block_statement
+    {
+      $$.ifCondition = std::move($3);
+      $$.ifStatement = std::move($5);
+    }
   | IF '(' expr ')' block_statement ELSE block_statement
-  | if_else_if_statement
-  ;
-
-if_else_if_statement
-  : IF '(' expr ')' block_statement else_if_statements
+    {
+      $$.ifCondition = std::move($3);
+      $$.ifStatement = std::move($5);
+      $$.elseStatement = std::move($7);
+    }
+  | IF '(' expr ')' block_statement else_if_statements
+    {
+      $$.ifCondition = std::move($3);
+      $$.ifStatement = std::move($5);
+      $$.elifs = std::move($6);
+    }
   | IF '(' expr ')' block_statement else_if_statements ELSE block_statement
+    {
+      $$.ifCondition = std::move($3);
+      $$.ifStatement = std::move($5);
+      $$.elifs = std::move($6);
+      $$.elseStatement = std::move($8);
+    }
   ;
 
 else_if_statements
-  :
-  | ELSE IF '(' expr ')' block_statement
+  : ELSE IF '(' expr ')' block_statement
+    {
+      $$.emplace_back(std::move(std::make_pair($4, $6)));
+    }
   | else_if_statements ELSE IF '(' expr ')' block_statement
+    {
+      $1.emplace_back(std::move(std::make_pair($5, $7)));
+      $$ = std::move($1);
+    }
   ;
 
 repeat_statement
   : REPEAT '(' expr ')' block_statement
     {
       $$.expr = std::move($3);
-      $$.stmt = std::move($5);
+      $$.statement = std::move($5);
     }
   ;
 
 while_statement
   : WHILE '(' expr ')' block_statement
     {
-      $$.while_cond = std::move($3);
-      $$.while_block = std::move($5);
+      $$.condition = std::move($3);
+      $$.statement = std::move($5);
     }
   ;
 
 for_statement
   : FOR '(' variable_assignment ';' expr ';' variable_assignment ')' block_statement
+    {
+      $$.initAssign = std::move($3);
+      $$.condition = std::move($5);
+      $$.iterAssign = std::move($7);
+      $$.statement = std::move($9);
+    }
   ;
 
 variable_assignment
-  : variable_lvalue '=' expr;
+  : variable_lvalue '=' expr
+    {
+      $$.first = std::move($1);
+      $$.second = std::move($3);
+    }
   ;
 
 system_task_enable
   : SYSTASKFUNC ';'
+    {
+      $$ = $1;
+    }
   | SYSTASKFUNC '(' ')' ';'
+    {
+      $$ = $1;
+    }
   | SYSTASKFUNC '(' expr_list ')' ';'
+    {
+      $$ = $1;
+    }
   ;
 
 task_enable
@@ -983,148 +1065,68 @@ range_expr
 expr
   : primary
     {$$ = std::move($1);}
-  // | unary_operator primary
-  // | expr binary_operator expr
-  // | expr '?' expr ':' expr
+  | expr binary_operator expr
+		{
+      $$.type = verilog::ExpressionType::BINARYOP;
+      $$.op = std::move($2);
+      $$.leftOperand = std::make_shared<verilog::Expression>(std::move($1));
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($3));
+    }
   | '-' expr %prec UMINUS
-    {$$.string = " -" + $2.string;}
-  | expr '+' expr
     {
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " + " + $3.string;
-    }
-  | expr '-' expr
-    {
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " - " + $3.string;
-    }
-  | expr '*' expr
-    {
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " * " + $3.string;
-    }
-  | expr '/' expr
-    {
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " / " + $3.string;
-    }
-  | expr '%' expr
-    {
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " % " + $3.string;
-    }
-  | expr EQ expr
-		{
-      $$.leftOperand = std::make_unique<verilog::Expression>(std::move($1));
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.left_op = $1.string;
-      $$.string = $3.string;
-    }
-	| expr NE expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " != " + $3.string;
-    }
-	| expr GT expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " > " + $3.string;
-    }
-	| expr GE expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " >= " + $3.string;
-    }
-	| expr LT expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " < " + $3.string;
-    }
-	| expr LE expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " <= " + $3.string;
-    }
-	| expr SL expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " << " + $3.string;
-    }
-	| expr SR expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " >> " + $3.string;
-    }
-	| expr LAND expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " && " + $3.string;
-    }
-	| expr LOR expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " || " + $3.string;
-    }
-	| expr BAND expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " & " + $3.string;
-    }
-	| expr BXOR expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " ^ " + $3.string;
-    }
-	| expr BOR expr
-		{
-      $$.isBitString = $1.isBitString || $3.isBitString;
-      $$.string = $1.string + " | " + $3.string;
+      $$.type = verilog::ExpressionType::UNARYOP;
+      $$.op = "-";
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| LNOT expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = " !" + $2.string;
+      $$.type = verilog::ExpressionType::UNARYOP;
+      $$.op = std::move($1);
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BAND expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = "Unsupported OP BAND UNARY" + $2.string;
+      $$.type = verilog::ExpressionType::NONE;
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BOR expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = "Unsupported OP BOR UNARY" + $2.string;
+      $$.type = verilog::ExpressionType::NONE;
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BNAND expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = "Unsupported OP BNAND UNARY" + $2.string;
+      $$.type = verilog::ExpressionType::NONE;
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BNOR expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = "Unsupported OP BNOR UNARY" + $2.string;
+      $$.type = verilog::ExpressionType::NONE;
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BXOR expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = "Unsupported OP BXOR UNARY" + $2.string;
+      $$.type = verilog::ExpressionType::NONE;
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BXNOR expr %prec UNARY
     {
-      $$.isBitString = $2.isBitString;
-      $$.string = "Unsupported OP BXNOR UNARY" + $2.string;
+      $$.type = verilog::ExpressionType::NONE;
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| BNOT expr %prec UNARY
 		{
-      $$.isBitString = $2.isBitString;
-      $$.string = " ~" + $2.string;
+      $$.type = verilog::ExpressionType::UNARYOP;
+      $$.op = std::move($1);
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
 	| '+' expr %prec UNARY
 		{
-      $$.isBitString = $2.isBitString;
-      $$.string = " +" + $2.string;
+      $$.type = verilog::ExpressionType::UNARYOP;
+      $$.op = "+";
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
     }
+    // | expr '?' expr ':' expr
   ;
 
 primary
@@ -1141,8 +1143,8 @@ primary
   | hierarchical_identifier optional_range
     {
       $$.string = $1;
-      $$.range_beg = $2.first;
-      $$.range_end = $2.second;
+      $$.beg = $2.first;
+      $$.end = $2.second;
       $$.type = verilog::ExpressionType::IDENTIFIER;
     }
   | concatenation
@@ -1155,6 +1157,7 @@ primary
     }
   | function_call
     {
+      $$.string = $1;
       $$.type = verilog::ExpressionType::FUNCTIONCALL;
     }
   | system_function_call
@@ -1163,7 +1166,7 @@ primary
       $$.type = verilog::ExpressionType::SYSTEMFUNCTIONCALL;
     }
   | '(' expr ')'
-    {$$.string = $2.string;}
+    {$$ = std::move($2);}
   | STRING
     {
       $$.string = $1;
@@ -1209,6 +1212,81 @@ system_function_call
 	| SYSTASKFUNC '(' expr_list ')'
     {$$ = $1;}
 	;
+
+  binary_operator
+  : '+'
+    {
+      $$ = "+";
+    }
+  | '-'
+    {
+      $$ = "-";
+    }
+  | '*'
+    {
+      $$ = "*";
+    }
+  | '/'
+    {
+      $$ = "/";
+    }
+  | '%'
+    {
+      $$ = "%";
+    }
+  | EQ
+		{
+      $$ = std::move($1);
+    }
+	| NE
+		{
+      $$ = std::move($1);
+    }
+	| GT
+		{
+      $$ = std::move($1);
+    }
+	| GE
+		{
+      $$ = std::move($1);
+    }
+	| LT
+		{
+      $$ = std::move($1);
+    }
+	| LE
+		{
+      $$ = std::move($1);
+    }
+	| SL
+		{
+      $$ = std::move($1);
+    }
+	| SR
+		{
+      $$ = std::move($1);
+    }
+	| LAND
+		{
+      $$ = std::move($1);
+    }
+	| LOR
+		{
+      $$ = std::move($1);
+    }
+	| BAND
+		{
+      $$ = std::move($1);
+    }
+	| BXOR
+		{
+      $$ = std::move($1);
+    }
+	| BOR
+		{
+      $$ = std::move($1);
+    }
+  ;
 
 
 %%

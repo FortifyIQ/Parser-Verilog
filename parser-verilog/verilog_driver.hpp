@@ -26,8 +26,8 @@ class ParserVerilogInterface {
     virtual void add_assignment(Assignment&&) = 0;
     virtual void add_instance(Instance&&) = 0;
 
-    virtual void add_var(Var&&) {};
     virtual void add_parameter(Parameter&&) {};
+    virtual void add_var(Var&&) {};
     virtual void add_task(Task&&) {};
 
     void read(const std::filesystem::path&); 

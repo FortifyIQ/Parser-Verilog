@@ -113,7 +113,7 @@ STRING         \".*\"
                       yyterminate();
                     }
 <in_directive>\\{NEWLINE} { loc->lines(); }
-<in_directive>. { /* ignore characters in comment */ }
+<in_directive>. { /* ignore characters in directive */ }
 <in_directive>{NEWLINE} { BEGIN(INITIAL); loc->lines(); }
 
 
@@ -121,25 +121,25 @@ STRING         \".*\"
   return yytext[0];
 }
 
-"<<"		{ return token::SL; }
-">>"		{ return token::SR; }
-">="		{ return token::GE; }
-">"			{ return token::GT; }
-"<="		{ return token::LE; }
-"<"			{ return token::LT; }
-"=="		{ return token::EQ; }
-"!="		{ return token::NE; }
-"&&"		{ return token::LAND; }
-"||"		{ return token::LOR; }
-"&"			{ return token::BAND; }
-"^"			{ return token::BXOR; }
-"|"			{ return token::BOR; }
-"~&"		{ return token::BNAND; }
-"~|"		{ return token::BNOR; }
-"~^"		{ return token::BXNOR; }
-"^~"		{ return token::BXNOR; }
-"~"			{ return token::BNOT; }
-"!"     { return token::LNOT; }
+"<<"		{ yylval->build<std::string>(yytext); return token::SL; }
+">>"		{ yylval->build<std::string>(yytext); return token::SR; }
+">="		{ yylval->build<std::string>(yytext); return token::GE; }
+">"			{ yylval->build<std::string>(yytext); return token::GT; }
+"<="		{ yylval->build<std::string>(yytext); return token::LE; }
+"<"			{ yylval->build<std::string>(yytext); return token::LT; }
+"=="		{ yylval->build<std::string>(yytext); return token::EQ; }
+"!="		{ yylval->build<std::string>(yytext); return token::NE; }
+"&&"		{ yylval->build<std::string>(yytext); return token::LAND; }
+"||"		{ yylval->build<std::string>(yytext); return token::LOR; }
+"&"			{ yylval->build<std::string>(yytext); return token::BAND; }
+"^"			{ yylval->build<std::string>(yytext); return token::BXOR; }
+"|"			{ yylval->build<std::string>(yytext); return token::BOR; }
+"~&"		{ yylval->build<std::string>(yytext); return token::BNAND; }
+"~|"		{ yylval->build<std::string>(yytext); return token::BNOR; }
+"~^"		{ yylval->build<std::string>(yytext); return token::BXNOR; }
+"^~"		{ yylval->build<std::string>(yytext); return token::BXNOR; }
+"~"			{ yylval->build<std::string>(yytext); return token::BNOT; }
+"!"     { yylval->build<std::string>(yytext); return token::LNOT; }
 
 module    { return token::MODULE; }
 endmodule { return token::ENDMODULE; }
