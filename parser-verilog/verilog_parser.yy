@@ -133,8 +133,7 @@
 
 %type<std::pair<std::variant<std::string, NetBit, NetRange>, std::vector<verilog::NetConcat>>> net_by_name 
 
-%type<std::pair<std::string, std::string>> range_expr optional_range
-%type<verilog::Expression> expr primary variable_lvalue
+%type<verilog::Expression> expr primary variable_lvalue optional_range range_expr
 %type<std::vector<verilog::Expression>> expr_list concatenation
 %type<std::pair<verilog::Expression, verilog::Expression>> variable_assignment
 
@@ -380,8 +379,7 @@ reg_decl
     {
       for (auto &decl : $3) {
         decl.type = verilog::VarType::REG;
-        decl.beg = $2.first;
-        decl.end = $2.second;
+        decl.range = std::move($2);
         $$.push_back(std::move(decl));
       }
     }
@@ -414,8 +412,7 @@ logic_decl
     {
       for (auto &decl : $3) {
         decl.type = verilog::VarType::LOGIC;
-        decl.beg = $2.first;
-        decl.end = $2.second;
+        decl.range = std::move($2);
         $$.push_back(std::move(decl));
       }
     }
@@ -510,22 +507,22 @@ task_arg
     {
       $$.type = verilog::ExpressionType::IDENTIFIER;
       $$.string = $3;
-      $$.beg = $2.first;
-      $$.end = $2.second;
+      $$.leftOperand = std::move($2.leftOperand);
+      $$.rightOperand = std::move($2.rightOperand);
     }
 	| INPUT optional_range valid_name
     {
       $$.type = verilog::ExpressionType::IDENTIFIER;
       $$.string = $3;
-      $$.beg = $2.first;
-      $$.end = $2.second;
+      $$.leftOperand = std::move($2.leftOperand);
+      $$.rightOperand = std::move($2.rightOperand);
     }
 	| OUTPUT optional_range valid_name
     {
       $$.type = verilog::ExpressionType::IDENTIFIER;
       $$.string = $3;
-      $$.beg = $2.first;
-      $$.end = $2.second;
+      $$.leftOperand = std::move($2.leftOperand);
+      $$.rightOperand = std::move($2.rightOperand);
     }
   ;
 
@@ -629,8 +626,8 @@ variable_lvalue
   : hierarchical_identifier optional_range
     {
       $$.string = $1;
-      $$.beg = $2.first;
-      $$.end = $2.second;
+      $$.leftOperand = std::move($2.leftOperand);
+      $$.rightOperand = std::move($2.rightOperand);
     }
   ;
 
@@ -1044,21 +1041,20 @@ always_construct
 
 optional_range
   :
-    {
-      $$.first = "";
-      $$.second = "";
-    }
+    { }
   | range_expr
-    {$$ = $1;}
+    {$$ = std::move($1);}
   ;
 
 range_expr
 	: '[' expr ']'
-    {$$.first = $2.string;}
+    {
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($2));
+    }
 	| '[' expr ':' expr ']'
     {
-      $$.first = $2.string;
-      $$.second = $4.string;
+      $$.leftOperand = std::make_shared<verilog::Expression>(std::move($2));
+      $$.rightOperand = std::make_shared<verilog::Expression>(std::move($4));
     }
 	;
 
@@ -1143,8 +1139,8 @@ primary
   | hierarchical_identifier optional_range
     {
       $$.string = $1;
-      $$.beg = $2.first;
-      $$.end = $2.second;
+      $$.leftOperand = std::move($2.leftOperand);
+      $$.rightOperand = std::move($2.rightOperand);
       $$.type = verilog::ExpressionType::IDENTIFIER;
     }
   | concatenation

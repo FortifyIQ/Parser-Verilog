@@ -263,17 +263,18 @@ namespace verilog {
   struct Expression {
     bool isBitString = false;
     std::string string; // expression as string
-    std::string beg;
-    std::string end;
     std::string op;
+    // variables hold lval and rval in case of BINARYOP
+    // or msb and lsb of range-slice (optionally in case of IDENTIFIER)
+    // for unary operations only right operand is set
+    // as well as for indexing
     std::shared_ptr<Expression> leftOperand{nullptr};
-    std::shared_ptr<Expression> rightOperand{nullptr}; // for unary operations only right operand is set
+    std::shared_ptr<Expression> rightOperand{nullptr};
     ExpressionType type{ExpressionType::NONE};
   };
 
   inline std::ostream& operator<<(std::ostream& os, const Expression& expr) {
     os << "Expression: " << expr.string;
-    os << ", range: " << expr.beg << " : " << expr.end << '\n';
     return os;
   }
 
@@ -294,15 +295,13 @@ namespace verilog {
 
   struct Var {
     std::string name;
-    std::string beg; // expression contained as string
-    std::string end; // expression contained as string
+    Expression range;
     VarType type;
     Expression rval;
   };
 
   inline std::ostream& operator<<(std::ostream& os, const Var& var) {
     os << var.name << '\n';
-    os << "beg: " << var.beg << "  end: " << var.end << '\n';
     os << "type: " << var.type << '\n' << "rval: " << var.rval << '\n';
     return os;
   }
