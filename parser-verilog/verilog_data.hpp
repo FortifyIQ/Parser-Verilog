@@ -6,9 +6,8 @@
 #include <fstream>
 #include <iostream>
 #include <variant>
-#include <optional>
-#include <experimental/filesystem>
 #include <boost/variant.hpp>
+#include <vector>
 
 
 namespace verilog {

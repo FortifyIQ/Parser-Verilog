@@ -48,6 +48,7 @@ add_executable(sample_parser
   ${FLEX_verilog_lexer_OUTPUTS}
   ${BISON_verilog_parser_OUTPUTS}
 )
+target_include_directories(sample_parser SYSTEM PRIVATE ${FLEX_INCLUDE_DIRS})
 
 target_link_libraries(sample_parser 
   Boost::boost
@@ -60,6 +61,7 @@ add_executable(ot_parser
   ${FLEX_verilog_lexer_OUTPUTS}
   ${BISON_verilog_parser_OUTPUTS}
 )
+target_include_directories(ot_parser SYSTEM PRIVATE ${FLEX_INCLUDE_DIRS})
 
 
 
@@ -75,5 +77,6 @@ set(VP_UTEST_DIR ${PROJECT_SOURCE_DIR}/unittest)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${VP_UTEST_DIR})
 
 add_executable(regression unittest/regression.cpp ${FLEX_verilog_lexer_OUTPUTS} ${BISON_verilog_parser_OUTPUTS})
+target_include_directories(regression SYSTEM PRIVATE ${FLEX_INCLUDE_DIRS})
 add_test(regression ${VP_UTEST_DIR}/regression)
 
