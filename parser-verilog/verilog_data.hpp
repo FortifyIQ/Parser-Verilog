@@ -260,6 +260,22 @@ namespace verilog {
     BINARYOP
   };
 
+  inline std::ostream& operator<<(std::ostream& os, const ExpressionType& t) {
+    switch(t){
+      case ExpressionType::NONE:                os << "NONE";               break;
+      case ExpressionType::CONSTANT:            os << "CONSTANT";           break;
+      case ExpressionType::IDENTIFIER:          os << "IDENTIFIER";         break;
+      case ExpressionType::CONCATENATION:       os << "CONCATENATION";      break;
+      case ExpressionType::MULTICONCATENATION:  os << "MULTICONCATENATION"; break;
+      case ExpressionType::FUNCTIONCALL:        os << "FUNCTIONCALL";       break;
+      case ExpressionType::SYSTEMFUNCTIONCALL:  os << "SYSTEMFUNCTIONCALL"; break;
+      case ExpressionType::STRING:              os << "STRING";             break;
+      case ExpressionType::UNARYOP:             os << "UNARYOP";            break;
+      case ExpressionType::BINARYOP:            os << "BINARYOP";           break;
+    }
+    return os;
+  }
+
   struct Expression {
     bool isBitString = false;
     std::string string; // expression as string
@@ -274,7 +290,31 @@ namespace verilog {
   };
 
   inline std::ostream& operator<<(std::ostream& os, const Expression& expr) {
-    os << "Expression: " << expr.string;
+    os << "Expression: " << expr.type << ": ";
+    switch (expr.type) {
+    case verilog::ExpressionType::CONSTANT:
+      os << expr.string;
+      break;
+    case verilog::ExpressionType::IDENTIFIER:
+      if (expr.leftOperand)
+        os << expr.string << '[' << (*expr.leftOperand) << ':' << (*expr.rightOperand) << ']';
+      else if (expr.rightOperand)
+        os << expr.string << '[' << (*expr.rightOperand) << ']';
+      else
+        os << expr.string;
+      break;
+    case verilog::ExpressionType::BINARYOP:
+      os << (*expr.leftOperand) << expr.op << (*expr.rightOperand);
+      break;
+    case verilog::ExpressionType::UNARYOP:
+      os << expr.op << (*expr.rightOperand);
+      break;
+    case verilog::ExpressionType::STRING:
+      os << expr.string;
+      break;
+    default:
+      os << std::string();
+    }
     return os;
   }
 
@@ -301,8 +341,11 @@ namespace verilog {
   };
 
   inline std::ostream& operator<<(std::ostream& os, const Var& var) {
+    if (var.range.leftOperand)
+      os << '[' << (*var.range.leftOperand) << ':' << (*var.range.rightOperand) << "] ";
     os << var.name << '\n';
-    os << "type: " << var.type << '\n' << "rval: " << var.rval << '\n';
+    os << "type: " << var.type << '\n';
+    os << "rval: " << var.rval << '\n';
     return os;
   }
 
@@ -326,7 +369,7 @@ namespace verilog {
   struct ForStatement;
   struct RepeatStatement;
   struct WaitStatement;
-  struct EventControl;
+  struct TimingControl;
 
   // Block contains statements, statement can be a block itself
   using Statement = boost::variant<std::string, Block, BlockingAssignment,
@@ -335,7 +378,7 @@ namespace verilog {
                                    boost::recursive_wrapper<WhileStatement>,
                                    boost::recursive_wrapper<ForStatement>,
                                    boost::recursive_wrapper<WaitStatement>,
-                                   boost::recursive_wrapper<EventControl>,
+                                   boost::recursive_wrapper<TimingControl>,
                                    boost::recursive_wrapper<RepeatStatement>
                                   >;
 
@@ -371,6 +414,15 @@ namespace verilog {
     CASEZ
   };
 
+  inline std::ostream& operator<<(std::ostream& os, const CaseType& t) {
+    switch(t){
+      case CaseType::CASE:  os << "CASE";   break;
+      case CaseType::CASEX: os << "CASEX";  break;
+      case CaseType::CASEZ: os << "CASEZ";  break;
+    }
+    return os;
+  }
+
   struct CaseStatement {
     Expression expr;
     std::vector<CaseItem> items;
@@ -399,88 +451,138 @@ namespace verilog {
     Statement statement;
   };
 
-  struct EventControl {
-    EventControl(std::string _string, Statement _stmt)
-    : string(std::move(_string)), statement(std::move(_stmt))
+  enum class ControlType {
+    DELAY,
+    EVENT
+  };
+
+  inline std::ostream& operator<<(std::ostream& os, const ControlType& t) {
+    switch(t){
+      case ControlType::DELAY:  os << "DELAY";  break;
+      case ControlType::EVENT:  os << "EVENT";  break;
+    }
+    return os;
+  }
+
+  struct TimingControl {
+    TimingControl(std::string _control, Statement _stmt, ControlType _type)
+    : control(std::move(_control)), statement(std::move(_stmt)), type(std::move(_type))
     {}
 
-    std::string string;
+    std::string control;
     Statement statement;
+    ControlType type;
   };
 
 
   class printer : public boost::static_visitor<>
   {
-    public:
+  public:
 
-      void operator()(const std::string &obj) const
-      {
-          std::cout << obj << '\n';
-      }
+    void operator()(const std::string &obj) const
+    {
+      std::cout << obj << '\n';
+    }
 
-      void operator()(const BlockingAssignment &obj) const
-      {
-          std::cout << obj.lval << '\n';
-          std::cout << obj.rval << '\n';
-      }
+    void operator()(const BlockingAssignment &obj) const
+    {
+      std::cout << "Blocking Assignment:\n";
+      std::cout << obj.lval << '\n';
+      std::cout << obj.rval << '\n';
+    }
 
-      void operator()(const CaseStatement &obj) const
-      {
-          std::cout << obj.expr << '\n';
-      }
-
-      void operator()(const ConditionalStatement &obj) const
-      {
-        std::cout << "ConditionalStatement\n";
-      }
-
-      void operator()(const WhileStatement &obj) const
-      {
-        std::cout << "while expr: " << obj.condition << '\n';
-        std::cout << "while block: " << '\n';
-        boost::apply_visitor(printer(), obj.statement);
-      }
-
-      void operator()(const ForStatement &obj) const
-      {
-        std::cout << "for statement\n";
-      }
-
-      void operator()(const RepeatStatement &obj) const
-      {
-        std::cout << "repeat expr: " << obj.expr << '\n';
-        boost::apply_visitor(printer(), obj.statement);
-      }
-
-      void operator()(const WaitStatement &obj) const
-      {
-        std::cout << "wait expr: " << obj.expr << '\n';
-        boost::apply_visitor(printer(), obj.statement);
-      }
-
-      void operator()(const EventControl &obj) const
-      {
-        std::cout << "event expr: " << obj.string << '\n';
-        boost::apply_visitor(printer(), obj.statement);
-      }
-
-      void operator()(const Block &obj) const
-      {
-        std::cout << obj.name << '\n';
-
-        std::cout << "Declarations:\n";
-        for(const auto& n: obj.vars)
-          std::cout << "Var decl: " << n << '\n';
-        for(const auto& n: obj.parameters)
-          std::cout << "Param decl: " << n << '\n';
-
-        if(!obj.statements.empty()){
-          std::cout << "Statements: {\n";
-          for(const auto& statement: obj.statements)
-            boost::apply_visitor(printer(), statement);
-          std::cout << "}\n";
+    void operator()(const CaseStatement &obj) const
+    {
+      std::cout << "Case Statement:\n";
+      std::cout << obj.type << '(' << obj.expr << ')' << '\n';
+      for (const CaseItem &item : obj.items) {
+        if (item.isDefault) {
+          std::cout << "default: ";
+          boost::apply_visitor(printer(), item.statement);
+        } else {
+          for (const Expression &expr : item.expressions)
+            std::cout << expr;
+          std::cout << ":\n";
+          boost::apply_visitor(printer(), item.statement);
         }
       }
+    }
+
+    void operator()(const ConditionalStatement &obj) const
+    {
+      std::cout << "Conditional Statement:\n";
+      std::cout << "if (" << obj.ifCondition << ")\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.ifStatement);
+      for (const auto &[expr, statement] : obj.elifs) {
+        std::cout << "else if (" << expr << ")\n";
+        std::cout << "    ";
+        boost::apply_visitor(printer(), statement);
+      }
+      std::cout << "else\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.elseStatement);
+    }
+
+    void operator()(const WhileStatement &obj) const
+    {
+      std::cout << "While Statement:\n";
+      std::cout << "while (" << obj.condition << ")\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.statement);
+    }
+
+    void operator()(const ForStatement &obj) const
+    {
+      std::cout << "For Statement:\n";
+      std::cout << "for (" << obj.initAssign.first << '=' << obj.initAssign.second << ';'
+                           << obj.condition << ';'
+                           << obj.iterAssign.first << '=' << obj.iterAssign.second << ")\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.statement);
+    }
+
+    void operator()(const RepeatStatement &obj) const
+    {
+      std::cout << "Repeat Statement:\n";
+      std::cout << "repeat(" << obj.expr << ")\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.statement);
+    }
+
+    void operator()(const WaitStatement &obj) const
+    {
+      std::cout << "Wait Statement:\n";
+      std::cout << "wait(" << obj.expr << ")\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.statement);
+    }
+
+    void operator()(const TimingControl &obj) const
+    {
+      std::cout << "Timing Control Statement:\n";
+      std::cout << obj.type << ' ' << obj.control << "\n";
+      std::cout << "    ";
+      boost::apply_visitor(printer(), obj.statement);
+    }
+
+    void operator()(const Block &obj) const
+    {
+      std::cout << obj.name << '\n';
+
+      std::cout << "Block Declarations:\n";
+      for(const auto &var: obj.vars)
+        std::cout << "Var decl: " << var << '\n';
+      for(const auto &param: obj.parameters)
+        std::cout << "Param decl: " << param << '\n';
+
+      if(!obj.statements.empty()){
+        std::cout << "Block Statements: {\n";
+        for(const auto& statement: obj.statements)
+          boost::apply_visitor(printer(), statement);
+        std::cout << "}\n";
+      }
+    }
   };
 
   struct Task {
@@ -498,12 +600,12 @@ namespace verilog {
       std::cout << arg;
 
     std::cout << "Task Declarations:\n";
-    for(const auto& n: task.vars)
-      std::cout << "Var decl: " << n << '\n';
-    for(const auto& n: task.parameters)
-      std::cout << "Param decl: " << n << '\n';
+    for(const auto &var: task.vars)
+      std::cout << "Var decl: " << var << '\n';
+    for(const auto &param: task.parameters)
+      std::cout << "Param decl: " << param << '\n';
 
-    os << "Statements: {\n";
+    os << "Task Statements: {\n";
     boost::apply_visitor(printer(), task.statement);
     os << "}\n";
 

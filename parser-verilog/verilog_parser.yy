@@ -603,9 +603,9 @@ block_statement
   | wait_statement
     {$$ = std::move($1);}
   | event_control block_statement
-    {$$ = verilog::EventControl(std::move($1), std::move($2));}
+    {$$ = verilog::TimingControl(std::move($1), std::move($2), std::move(verilog::ControlType::EVENT));}
   | delay_control block_statement
-    {$$ = "//Delay control skipped";}
+    {$$ = verilog::TimingControl(std::move($1), std::move($2), std::move(verilog::ControlType::DELAY));}
 	;
 
 blocking_assignment
@@ -628,6 +628,7 @@ variable_lvalue
       $$.string = $1;
       $$.leftOperand = std::move($2.leftOperand);
       $$.rightOperand = std::move($2.rightOperand);
+      $$.type = verilog::ExpressionType::IDENTIFIER;
     }
   ;
 
