@@ -31,6 +31,7 @@ class ParserVerilogInterface {
     virtual void add_task(Task&&) {};
 
     void read(const std::filesystem::path&); 
+    void read(std::istream *s);
 
   private:
     VerilogScanner* _scanner {nullptr};
@@ -43,9 +44,12 @@ inline void ParserVerilogInterface::read(const std::filesystem::path& p){
   }
 
   std::ifstream ifs(p);
+  read(&ifs);
+}
 
+inline void ParserVerilogInterface::read(std::istream *s){
   if(!_scanner){
-    _scanner = new VerilogScanner(&ifs);
+    _scanner = new VerilogScanner(s);
   }
   if(!_parser){
     _parser = new VerilogParser(*_scanner, this);
