@@ -117,7 +117,7 @@
 %type<verilog::RepeatStatement> repeat_statement
 %type<verilog::WhileStatement> while_statement
 %type<verilog::ForStatement> for_statement
-%type<std::string> system_task_enable task_enable
+%type<verilog::TaskEnable> system_task_enable task_enable
 %type<verilog::WaitStatement> wait_statement
 %type<std::string> procedural_timing_control event_control delay_control event_expr
 
@@ -597,7 +597,7 @@ block_statement
   | seq_block
     {$$ = std::move($1);}
   | system_task_enable
-    {$$ = "//System task skipped";}
+    {$$ = std::move($1);}
   | task_enable
     {$$ = std::move($1);}
   | wait_statement
@@ -759,27 +759,31 @@ variable_assignment
 system_task_enable
   : SYSTASKFUNC ';'
     {
-      $$ = $1;
+      $$.isSystem = true;
+      $$.name = $1;
     }
   | SYSTASKFUNC '(' ')' ';'
     {
-      $$ = $1;
+      $$.isSystem = true;
+      $$.name = $1;
     }
   | SYSTASKFUNC '(' expr_list ')' ';'
     {
-      $$ = $1;
+      $$.isSystem = true;
+      $$.name = $1;
+      $$.args = std::move($3);
     }
   ;
 
 task_enable
   : hierarchical_identifier ';'
-    {$$ = $1 + "();";}
+    {
+      $$.name = $1;
+    }
   | hierarchical_identifier '(' expr_list ')' ';'
     {
-      $$ = $1 + '(';
-      for (const auto &expression : $3)
-        $$ += expression.string;
-      $$ += ");";
+      $$.name = $1;
+      $$.args = std::move($3);
     }
   ;
 

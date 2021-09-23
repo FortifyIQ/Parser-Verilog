@@ -362,6 +362,7 @@ namespace verilog {
   struct Block;
 
   struct BlockingAssignment;
+  struct TaskEnable;
   struct CaseStatement;
   struct ConditionalStatement;
   struct WhileStatement;
@@ -371,7 +372,7 @@ namespace verilog {
   struct TimingControl;
 
   // Block contains statements, statement can be a block itself
-  using Statement = boost::variant<std::string, Block, BlockingAssignment,
+  using Statement = boost::variant<std::string, Block, BlockingAssignment, TaskEnable,
                                    boost::recursive_wrapper<CaseStatement>,
                                    boost::recursive_wrapper<ConditionalStatement>,
                                    boost::recursive_wrapper<WhileStatement>,
@@ -392,6 +393,12 @@ namespace verilog {
     std::string timeControl;
     Expression lval;
     Expression rval;
+  };
+
+  struct TaskEnable {
+    bool isSystem = false;
+    std::string name;
+    std::vector<Expression> args;
   };
 
   struct ConditionalStatement {
@@ -488,6 +495,18 @@ namespace verilog {
       std::cout << "Blocking Assignment:\n";
       std::cout << obj.lval << '\n';
       std::cout << obj.rval << '\n';
+    }
+
+    void operator()(const TaskEnable &obj) const
+    {
+      if (obj.isSystem)
+        std::cout << "System ";
+      std::cout << "Task Enabling:\n";
+      std::cout << obj.name << "(\n";
+      std::cout << "arguments:\n";
+      for (const Expression &expr : obj.args)
+        std::cout << expr;
+      std::cout << "\n)";
     }
 
     void operator()(const CaseStatement &obj) const
