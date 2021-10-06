@@ -198,9 +198,11 @@ namespace verilog {
   }
 
   using NetConcat = std::variant<std::string, NetBit, NetRange, Constant>;
+  struct Expression;
 
   struct Instance {
     std::string module_name;
+    std::vector<std::pair<std::string, Expression>> parameters;
     std::string inst_name;
   
     // pin_names might be empty. e.g. my_module m1(net1, net2);

@@ -126,7 +126,9 @@
 %type<std::vector<std::variant<std::string, verilog::NetBit, verilog::NetRange>>> lhs lhs_concat lhs_exprs lhs_expr
 %type<std::vector<verilog::NetConcat>> rhs rhs_concat rhs_exprs rhs_expr 
 
-%type<verilog::Instance> instance  
+%type<verilog::Instance> instance
+%type<std::vector<std::pair<std::string, Expression>>> parameter_value_assignment list_of_parameter_assignments
+%type<std::pair<std::string, Expression>> ordered_parameter_assignment named_parameter_assignment
 %type<std::pair<std::vector<std::variant<std::string, NetBit, NetRange>>, std::vector<std::vector<verilog::NetConcat>>>> inst_pins nets_by_name 
 
 %type<std::vector<std::vector<verilog::NetConcat>>> nets_by_position
@@ -939,9 +941,10 @@ instance
       std::swap($$.net_names, std::get<1>($4));  
       driver->add_instance(std::move($$));
     }
-  | valid_name parameters valid_name '(' inst_pins ')' ';'
+  | valid_name parameter_value_assignment valid_name '(' inst_pins ')' ';'
     { 
       std::swap($$.module_name, $1); 
+      std::swap($$.parameters , $2);
       std::swap($$.inst_name, $3); 
       std::swap($$.pin_names, std::get<0>($5));  
       std::swap($$.net_names, std::get<1>($5));  
@@ -1029,12 +1032,51 @@ net_by_name
     }
   ;
 
-
-// parameters are ignored for now
-parameters 
-  : '#' '(' expr_list ')'
+parameter_value_assignment
+  : '#' '(' list_of_parameter_assignments ')'
+    {
+      $$ = std::move($3);
+    }
   ;
 
+list_of_parameter_assignments
+  : ordered_parameter_assignment
+    {
+      $$.push_back(std::move($1));
+    }
+  | list_of_parameter_assignments ',' ordered_parameter_assignment
+    {
+      $1.push_back(std::move($3));
+      $$ = std::move($1);
+    }
+  | named_parameter_assignment
+    {
+      $$.push_back(std::move($1));
+    }
+  | list_of_parameter_assignments ',' named_parameter_assignment
+    {
+      $1.push_back(std::move($3));
+      $$ = std::move($1);
+    }
+  ;
+
+ordered_parameter_assignment
+  : expr
+    {
+      $$ = std::make_pair(std::move(std::string()), std::move($1));
+    }
+  ;
+
+named_parameter_assignment
+  : '.' valid_name '(' ')'
+    {
+      $$ = std::make_pair(std::move($2), std::move(Expression()));
+    }
+  | '.' valid_name '(' expr ')'
+    {
+      $$ = std::make_pair(std::move($2), std::move($4));
+    }
+  ;
 
 initial_construct
   : INITIALKEY block_statement
