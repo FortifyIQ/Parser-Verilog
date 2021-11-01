@@ -170,7 +170,7 @@ module
       driver->add_module(std::move($2));
     }
     statements ENDMODULE
-  | MODULE valid_name module_parameter_port_list '(' port_names ')' ';' 
+  | MODULE valid_name module_parameter_port_list '(' list_of_ports ')' ';' 
     {
       driver->add_module(std::move($2));
     }
@@ -210,11 +210,31 @@ parameter_assignments
 	;
 
 // port names are ignored as they will be parsed later in declaration
-port_names 
-  : valid_name { }
-  | port_names ',' valid_name  { }
-  ; 
+list_of_ports
+  : port
+  | list_of_ports ',' port
+  ;
 
+port
+  :
+  | port_expression
+  | '.' valid_name '(' ')'
+  | '.' valid_name '(' port_expression ')'
+  ;
+
+port_expression
+  : port_reference
+  | '{' port_references '}'
+  ;
+
+port_references
+  : port_reference
+  | port_references ',' port_reference
+  ;
+
+port_reference
+  : valid_name optional_range
+  ;
 
 port_type 
   : INPUT      { $$ = std::make_pair(verilog::PortDirection::INPUT, verilog::ConnectionType::NONE); }
