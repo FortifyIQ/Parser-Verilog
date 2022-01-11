@@ -735,11 +735,11 @@ conditional_statement
 else_if_statements
   : ELSE IF '(' expr ')' block_statement
     {
-      $$.emplace_back(std::move(std::make_pair($4, $6)));
+      $$.emplace_back(std::move($4), std::move($6));
     }
   | else_if_statements ELSE IF '(' expr ')' block_statement
     {
-      $1.emplace_back(std::move(std::make_pair($5, $7)));
+      $1.emplace_back(std::move($5), std::move($7));
       $$ = std::move($1);
     }
   ;
