@@ -1,6 +1,7 @@
 #ifndef DATA_VERILOG_HPP_
 #define DATA_VERILOG_HPP_
 
+#include <memory>
 #include <string>
 #include <cstddef>
 #include <fstream>
