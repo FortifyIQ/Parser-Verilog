@@ -15,7 +15,7 @@ namespace verilog {
 
   enum class ConstantType {
     NONE,
-    INTEGER,
+    UNSIGNED,
     BINARY,
     OCTAL, 
     DECIMAL,
@@ -27,7 +27,7 @@ namespace verilog {
   inline std::ostream& operator<<(std::ostream& os, const ConstantType& t) {  
     switch(t) {
       case ConstantType::NONE:    os << "NONE";    break; 
-      case ConstantType::INTEGER: os << "INTEGER"; break;
+      case ConstantType::UNSIGNED:os << "UNSIGNED"; break;
       case ConstantType::BINARY:  os << "BINARY";  break; 
       case ConstantType::OCTAL:   os << "OCTAL";   break; 
       case ConstantType::DECIMAL: os << "DECIMAL"; break;
@@ -289,6 +289,15 @@ namespace verilog {
     std::shared_ptr<Expression> leftOperand{nullptr};
     std::shared_ptr<Expression> rightOperand{nullptr};
     ExpressionType type{ExpressionType::NONE};
+
+    // For structural Verilog
+    int convertIndex()
+    {
+      if (type == ExpressionType::UNARYOP)
+        return std::stoi(op + rightOperand->string);
+      else
+        return std::stoi(string);
+    }
   };
 
   inline std::ostream& operator<<(std::ostream& os, const Expression& expr) {

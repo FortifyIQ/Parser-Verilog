@@ -76,7 +76,7 @@
 /* Built-in system tasks and functions names*/
 %token<std::string> SYSTASKFUNC
 
-%token<verilog::Constant> INTEGER BINARY OCTAL DECIMAL HEX REAL EXP
+%token<verilog::Constant> UNSIGNED BINARY OCTAL DECIMAL HEX REAL EXP
 
 /* Keyword tokens */
 // Structural
@@ -198,7 +198,7 @@ parameter_declarations
 
 parameter_declaration
 	: SIGNED range_expr parameter_assignments
-	| INTEGER parameter_assignments
+	| UNSIGNED parameter_assignments
 	| REAL parameter_assignments
 	| REALTIME parameter_assignments
 	| TIME parameter_assignments
@@ -271,12 +271,12 @@ port_decl
       $$.type = std::get<1>($1);
       $$.names.emplace_back(std::move($2)); 
     }
-  | port_type '[' INTEGER ':' INTEGER ']' valid_name  
+  | port_type '[' expr ':' expr ']' valid_name  
     {
       $$.dir  = std::get<0>($1);
       $$.type = std::get<1>($1);
-      $$.beg = std::stoi($3.value);
-      $$.end = std::stoi($5.value);
+      $$.beg = $3.convertIndex();
+      $$.end = $5.convertIndex();
       $$.names.push_back(std::move($7)); 
     }
   ;
@@ -364,11 +364,11 @@ net_decl
       $$.type = $1;
       $$.names.push_back(std::move($2)); 
     }
-  | net_type '[' INTEGER ':' INTEGER ']' valid_name  
+  | net_type '[' expr ':' expr ']' valid_name  
     {
       $$.type = $1;
-      $$.beg = std::stoi($3.value);
-      $$.end = std::stoi($5.value);
+      $$.beg = $3.convertIndex();
+      $$.end = $5.convertIndex();
       $$.names.push_back(std::move($7)); 
     }
   ;
@@ -823,7 +823,7 @@ procedural_timing_control
 	;
 
 delay_control
-  : '#' INTEGER
+  : '#' UNSIGNED
     {$$ = $2.value;}
   | '#' REAL
     {$$ = $2.value;}
@@ -872,10 +872,10 @@ assignment
 // Should try to merge lhs & rhs definition
 lhs
   : valid_name { $$.push_back(std::move($1)); }
-  | valid_name '[' INTEGER ']' 
-    { $$.emplace_back(verilog::NetBit(std::move($1), std::stoi($3.value))); }
-  | valid_name '[' INTEGER ':' INTEGER ']' 
-    { $$.emplace_back(verilog::NetRange(std::move($1), std::stoi($3.value), std::stoi($5.value))); }
+  | valid_name '[' expr ']' 
+    { $$.emplace_back(verilog::NetBit(std::move($1), $3.convertIndex())); }
+  | valid_name '[' expr ':' expr ']' 
+    { $$.emplace_back(verilog::NetRange(std::move($1), $3.convertIndex(), $5.convertIndex())); }
   | lhs_concat { $$ = $1; }
   ;
  
@@ -894,10 +894,10 @@ lhs_exprs
 
 lhs_expr 
   : valid_name { $$.push_back(std::move($1)); }
-  | valid_name '[' INTEGER ']' 
-    { $$.emplace_back(verilog::NetBit(std::move($1), std::stoi($3.value))); }
-  | valid_name '[' INTEGER ':' INTEGER ']' 
-    { $$.emplace_back(verilog::NetRange(std::move($1), std::stoi($3.value), std::stoi($5.value))); }
+  | valid_name '[' expr ']' 
+    { $$.emplace_back(verilog::NetBit(std::move($1), $3.convertIndex())); }
+  | valid_name '[' expr ':' expr ']' 
+    { $$.emplace_back(verilog::NetRange(std::move($1), $3.convertIndex(), $5.convertIndex())); }
   | lhs_concat 
     { std::move($1.begin(), $1.end(), std::back_inserter($$)); }
   ;
@@ -905,7 +905,7 @@ lhs_expr
 
 
 constant
-  : INTEGER  { $$=$1; }
+  : UNSIGNED  { $$=$1; }
   | BINARY { $$=$1; }
   | OCTAL { $$=$1; } 
   | DECIMAL { $$=$1; }
@@ -916,10 +916,10 @@ constant
 
 rhs
   : valid_name { $$.emplace_back($1); }
-  | valid_name '[' INTEGER ']' 
-    { $$.emplace_back(verilog::NetBit(std::move($1), std::stoi($3.value))); }
-  | valid_name '[' INTEGER ':' INTEGER ']' 
-    { $$.emplace_back(verilog::NetRange(std::move($1), std::stoi($3.value), std::stoi($5.value))); } 
+  | valid_name '[' expr ']' 
+    { $$.emplace_back(verilog::NetBit(std::move($1), $3.convertIndex())); }
+  | valid_name '[' expr ':' expr ']' 
+    { $$.emplace_back(verilog::NetRange(std::move($1), $3.convertIndex(), $5.convertIndex())); } 
   | constant { $$.push_back(std::move($1)); }
   | rhs_concat { $$ = $1; }
   ;
@@ -939,10 +939,10 @@ rhs_exprs
 
 rhs_expr 
   : valid_name { $$.push_back(std::move($1)); }
-  | valid_name '[' INTEGER ']' 
-    { $$.emplace_back(verilog::NetBit(std::move($1), std::stoi($3.value))); }
-  | valid_name '[' INTEGER ':' INTEGER ']' 
-    { $$.emplace_back(verilog::NetRange(std::move($1), std::stoi($3.value), std::stoi($5.value))); } 
+  | valid_name '[' expr ']' 
+    { $$.emplace_back(verilog::NetBit(std::move($1), $3.convertIndex())); }
+  | valid_name '[' expr ':' expr ']' 
+    { $$.emplace_back(verilog::NetRange(std::move($1), $3.convertIndex(), $5.convertIndex())); } 
   | constant { $$.push_back(std::move($1)); }
   | rhs_concat 
     { std::move($1.begin(), $1.end(), std::back_inserter($$)); }
@@ -1019,10 +1019,10 @@ net_by_name
        std::get<0>($$) = $2; 
        std::get<1>($$).push_back(std::move($4)); 
     } 
-  | '.' valid_name '(' valid_name '[' INTEGER ']' ')' 
+  | '.' valid_name '(' valid_name '[' expr ']' ')' 
     { 
       std::get<0>($$) = $2; 
-      std::get<1>($$).emplace_back(verilog::NetBit(std::move($4), std::stoi($6.value))); 
+      std::get<1>($$).emplace_back(verilog::NetBit(std::move($4), $6.convertIndex())); 
     } 
   // The previous two rules are also in rhs. But I don't want to create special rule just for this case 
   | '.' valid_name '(' rhs ')' 
@@ -1031,23 +1031,23 @@ net_by_name
       std::get<1>($$) = $4; 
     }
   // Bus port bit 
-  | '.' valid_name '[' INTEGER ']' '(' ')'
+  | '.' valid_name '[' expr ']' '(' ')'
     {
-      std::get<0>($$) = verilog::NetBit(std::move($2), std::stoi($4.value)); 
+      std::get<0>($$) = verilog::NetBit(std::move($2), $4.convertIndex()); 
     }
-  | '.' valid_name '[' INTEGER ']' '(' rhs ')'
+  | '.' valid_name '[' expr ']' '(' rhs ')'
     {
-      std::get<0>($$) = verilog::NetBit(std::move($2), std::stoi($4.value)); 
+      std::get<0>($$) = verilog::NetBit(std::move($2), $4.convertIndex()); 
       std::get<1>($$) = $7; 
     }
   // Bus port part 
-  | '.' valid_name '[' INTEGER ':' INTEGER ']' '(' ')'
+  | '.' valid_name '[' expr ':' expr ']' '(' ')'
     {
-      std::get<0>($$) = verilog::NetRange(std::move($2), std::stoi($4.value), std::stoi($6.value)); 
+      std::get<0>($$) = verilog::NetRange(std::move($2), $4.convertIndex(), $6.convertIndex()); 
     }
-  | '.' valid_name '[' INTEGER ':' INTEGER ']' '(' rhs ')'
+  | '.' valid_name '[' expr ':' expr ']' '(' rhs ')'
     {
-      std::get<0>($$) = verilog::NetRange(std::move($2), std::stoi($4.value), std::stoi($6.value)); 
+      std::get<0>($$) = verilog::NetRange(std::move($2), $4.convertIndex(), $6.convertIndex()); 
       std::get<1>($$) = $9; 
     }
   ;
