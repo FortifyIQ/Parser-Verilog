@@ -16,8 +16,8 @@ namespace verilog {
 class ParserVerilogInterface {
   public:
     virtual ~ParserVerilogInterface(){
-      if(_scanner) delete _scanner;
       if(_parser) delete _parser;
+      if(_scanner) delete _scanner;
     }
     virtual void add_module(std::string&&) = 0;
     // port names, begin index, end index, port type (IOB), connection type (wire, reg)
